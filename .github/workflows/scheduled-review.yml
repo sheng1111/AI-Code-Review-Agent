@@ -1,0 +1,67 @@
+name: Scheduled Code Review Scan
+
+on:
+  # Execute scan once daily at UTC+8 02:00AM (UTC 18:00)
+  schedule:
+    - cron: '0 18 * * *'  # Daily at UTC 18:00 (UTC+8 02:00)
+  
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      scan_hours:
+        description: 'Scan commits from last N hours (default: 24)'
+        required: false
+        default: '24'
+      max_commits_per_repo:
+        description: 'Max commits to review per repository (default: 3)'
+        required: false
+        default: '3'
+
+# Add necessary permission settings
+permissions:
+  contents: read          # Read repository content
+  issues: write          # Write issues (create code review issues)
+
+jobs:
+  scheduled-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir requests
+          
+      - name: Validate Configuration
+        run: |
+          python scripts/test_config.py
+          
+      - name: Scheduled Code Review Scan
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          SCAN_HOURS: ${{ github.event.inputs.scan_hours || '24' }}
+          MAX_COMMITS_PER_REPO: ${{ github.event.inputs.max_commits_per_repo || '3' }}
+        run: |
+          echo "🕐 Starting scheduled scan for commits from last ${SCAN_HOURS} hours, max ${MAX_COMMITS_PER_REPO} commits per repository"
+          python scripts/ai_code_review.py
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🕐 Scheduled Code Review Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Execution Time**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scan Range**: Last ${{ github.event.inputs.scan_hours || '24' }} hours" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max Reviews per Repo**: ${{ github.event.inputs.max_commits_per_repo || '3' }} commits" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "💡 **Note**: System automatically scans configured repository list and creates review issues for new commits" >> $GITHUB_STEP_SUMMARY
+          echo "📋 **View Results**: Go to each repository's Issues page to view 'ai-code-review' labeled issues" >> $GITHUB_STEP_SUMMARY

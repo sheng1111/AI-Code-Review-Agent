@@ -1,0 +1,41 @@
+{
+  "model": {
+    "name": "Llama-4-Maverick-17B-128E-Instruct-FP8",
+    "fallback_models": [
+      "Llama-3.3-Nemotron-Super-49B-v1",
+      "Llama-3.3-70B-Instruct-MI210",
+      "Llama-3.3-70B-Instruct-Gaudi3"
+    ],
+    "max_tokens": 32768,
+    "temperature": 0.2,
+    "timeout": 90
+  },
+  "projects": {
+    "enabled_repos": [
+      "sheng1111/EdgeFunASR_STT",
+      "sheng1111/M4A-Transcriber-TW",
+      "sheng1111/EdgeWhisperPi",
+      "sheng1111/Proxy-Hunter"
+    ],
+    "default_repo": "sheng1111/AI-Code-Review-Agent"
+  },
+  "review": {
+    "max_diff_size": 150000,
+    "large_diff_threshold": 300000,
+    "chunk_max_tokens": 8192,
+    "max_files_detail": 8,
+    "overview_max_tokens": 12288,
+    "response_language": "zh-TW"
+  },
+  "filters": {
+    "ignored_extensions": [".md", ".txt", ".yml", ".yaml", ".json", ".lock", ".png", ".jpg", ".gif", ".svg"],
+    "ignored_paths": ["docs/", "documentation/", ".github/", "node_modules/", "dist/", "build/", ".vscode/"],
+    "code_extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".go", ".rs", ".php", ".rb", ".cs", ".swift", ".kt"]
+  },
+  "prompts": {
+    "include_line_numbers": true,
+    "detailed_analysis": true,
+    "security_focus": true,
+    "performance_analysis": true
+  }
+} 

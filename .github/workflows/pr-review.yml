@@ -1,0 +1,73 @@
+name: AI Code Review
+
+on:
+  # Trigger when new push is made (supports all branches)
+  push:
+    paths-ignore:
+      - '*.md'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'docs/**'
+  
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      target_commit:
+        description: 'Specify the commit SHA to review (optional)'
+        required: false
+        default: ''
+
+# Add necessary permission settings
+permissions:
+  contents: read          # Read repository content
+  actions: read          # Read actions
+  checks: write          # Write checks
+  statuses: write        # Write commit status
+  issues: write          # Write issues (create code review issues)
+  pull-requests: write   # Write PR comments
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 5  # Get the last 5 commits for comparison
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir requests
+          
+      - name: Validate Configuration
+        run: |
+          python scripts/test_config.py
+          
+      - name: AI Code Review
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TARGET_COMMIT: ${{ github.event.inputs.target_commit }}
+        run: |
+          python scripts/ai_code_review.py
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🤖 AI Code Review Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Execution Time**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${GITHUB_REF#refs/heads/}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${GITHUB_SHA:0:8}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "💡 **Tip**: The review results have been published in the commit comments" >> $GITHUB_STEP_SUMMARY
+          echo "📋 **View**: Go to the Issues page to view the complete code review report" >> $GITHUB_STEP_SUMMARY 
