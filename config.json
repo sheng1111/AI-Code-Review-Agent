@@ -1,10 +1,10 @@
 {
   "model": {
-    "name": "Llama-4-Maverick-17B-128E-Instruct-FP8",
+    "name": "gpt-4.1-mini",
     "fallback_models": [
-      "Llama-3.3-Nemotron-Super-49B-v1",
-      "Llama-3.3-70B-Instruct-MI210",
-      "Llama-3.3-70B-Instruct-Gaudi3"
+      "gpt-4.1",
+      "gpt-4.1-nano",
+      "gpt-4o-mini"
     ],
     "max_tokens": 32768,
     "temperature": 0.2,
