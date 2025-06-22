@@ -16,6 +16,10 @@ on:
         description: 'Max commits to review per repository (default: 3)'
         required: false
         default: '3'
+      scan_concurrency:
+        description: 'Number of repositories to scan concurrently (default: 4)'
+        required: false
+        default: '4'
 
 # Add necessary permission settings
 permissions:
@@ -50,6 +54,7 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           SCAN_HOURS: ${{ github.event.inputs.scan_hours || '24' }}
           MAX_COMMITS_PER_REPO: ${{ github.event.inputs.max_commits_per_repo || '3' }}
+          SCAN_CONCURRENCY: ${{ github.event.inputs.scan_concurrency || '4' }}
         run: |
           echo "🕐 Starting scheduled scan for commits from last ${SCAN_HOURS} hours, max ${MAX_COMMITS_PER_REPO} commits per repository"
           python scripts/ai_code_review.py

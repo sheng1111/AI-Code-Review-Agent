@@ -196,33 +196,44 @@ def scan_all_enabled_repos():
         return []
     
     pending_reviews = []
-    
-    for repo_name in enabled_repos:
+
+    def process_repository(repo_name):
+        """Fetch commits and return pending reviews for a single repo"""
         print(f"\nScanning repository: {repo_name}")
         commits = get_recent_commits_from_repo(repo_name)
-        
+
+        repo_pending = []
         for commit in commits:
             commit_sha = commit['sha']
             commit_message = commit['commit']['message']
             author = commit['commit']['author']['name']
             commit_date = commit['commit']['author']['date']
-            
+
             print(f"  Commit {commit_sha[:8]}: {commit_message[:50]}...")
             print(f"     Author: {author}, Date: {commit_date}")
-            
-            # Check if this commit has already been reviewed
+
             if not has_been_reviewed(repo_name, commit_sha):
-                pending_reviews.append({
+                repo_pending.append({
                     'repo': repo_name,
                     'commit_sha': commit_sha,
                     'commit_message': commit_message,
                     'author': author,
                     'date': commit_date
                 })
-                print(f"  Added to review queue")
+                print("  Added to review queue")
             else:
-                print(f"  Already reviewed, skipping")
-    
+                print("  Already reviewed, skipping")
+
+        return repo_pending
+
+    concurrency = int(os.environ.get('SCAN_CONCURRENCY', '4'))
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        future_to_repo = {executor.submit(process_repository, repo): repo for repo in enabled_repos}
+
+        for future in as_completed(future_to_repo):
+            pending_reviews.extend(future.result())
+
     return pending_reviews
 
 def has_been_reviewed(repo_name, commit_sha):

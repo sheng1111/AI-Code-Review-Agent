@@ -259,7 +259,7 @@ Go to the `Actions` page to view execution results.
 
 **Execution Time**:
 - **Scheduled Trigger**: Daily at 2:00 AM UTC+8 (6:00 PM UTC)
-- **Manual Trigger**: Can customize scan time range and maximum commits per repository
+- **Manual Trigger**: Can customize scan time range, maximum commits per repository, and concurrency
 
 **Scan Logic**:
 1. **Repository Traversal** → Scan all repositories in `enabled_repos`
@@ -267,6 +267,7 @@ Go to the `Actions` page to view execution results.
 3. **Duplicate Check** → Automatically skip commits that already have review Issues
 4. **Parallel Processing** → Simultaneously process multiple repositories and commits
 5. **Quantity Limit** → Process up to 3 latest commits per repository (adjustable)
+6. **Concurrency Limit** → Set `SCAN_CONCURRENCY` to control parallel repository scans (default: 4)
 
 ### Review Processing Flow
 
@@ -445,6 +446,7 @@ Go to the `Actions` page to view execution results.
 2. **Reasonable temperature setting**: 0.1-0.3 suitable for code review
 3. **Concurrency control**: Avoid exceeding API rate limits
 4. **Project scope control**: Only enable automatic review for important projects
+5. **Adjust `SCAN_CONCURRENCY`**: Increase thread count to reduce scheduled scan time
 
 ### Cost Control Strategies
 1. **Set appropriate file size limits** (recommend full analysis within 150KB)
