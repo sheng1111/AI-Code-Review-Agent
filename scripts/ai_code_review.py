@@ -288,37 +288,53 @@ def get_commit_info(commit_sha, repo=None):
         print(f"Failed to get commit info: {response.status_code}")
         return None
 
+class LLMAPIError(Exception):
+    """Raised when the LLM API call fails"""
+
+
 def call_llm_api(prompt, max_tokens=None, temperature=None):
-    """Unified interface for calling LLM API"""
+    """Unified interface for calling the LLM API
+
+    Raises
+    ------
+    LLMAPIError
+        If the API returns a non-200 status code or the request fails.
+    """
     api_key = os.environ['OPENAI_KEY']
     base_url = os.environ['OPENAI_BASE_URL']
-    
+
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json'
     }
-    
+
     data = {
         'model': ModelConfig.MODEL_NAME,
         'messages': [{'role': 'user', 'content': prompt}],
         'max_tokens': max_tokens or ModelConfig.MAX_TOKENS,
         'temperature': temperature or ModelConfig.TEMPERATURE
     }
-    
+
     try:
         completion_url = f"{base_url.rstrip('/')}/chat/completions"
-        response = requests.post(completion_url, headers=headers, json=data, timeout=ModelConfig.TIMEOUT)
-        
+        response = requests.post(
+            completion_url,
+            headers=headers,
+            json=data,
+            timeout=ModelConfig.TIMEOUT,
+        )
+
         if response.status_code == 200:
             result = response.json()
             if 'choices' in result and result['choices']:
                 return result['choices'][0]['message']['content']
-            else:
-                return "LLM response format error"
-        else:
-            return f"LLM service error {response.status_code}: {response.text}"
+            raise LLMAPIError("LLM response format error")
+
+        # Avoid leaking potential API keys in error responses
+        raise LLMAPIError(f"LLM service error {response.status_code}")
+
     except Exception as e:
-        return f"LLM API call failed: {str(e)}"
+        raise LLMAPIError(f"LLM API call failed: {str(e)}") from e
 
 def generate_review_prompt(diff_content, commit_info):
     """Generate code review prompt"""
@@ -722,14 +738,19 @@ def review_single_commit(commit_data):
     print(f"Review statistics: {len(files)} files changed")
     
     # Choose review strategy based on change size
-    if len(diff_content) > ReviewConfig.LARGE_DIFF_THRESHOLD:
-        print(f"Large changes ({len(diff_content):,} chars), using chunked analysis")
-        review_result = review_large_diff_in_chunks(diff_content, commit_info)
-    else:
-        print(f"Change size: {len(diff_content):,} chars, using full analysis")
-        review_result = review_code_with_llm(diff_content, commit_info)
-    
-    print("AI code review completed")
+    try:
+        if len(diff_content) > ReviewConfig.LARGE_DIFF_THRESHOLD:
+            print(f"Large changes ({len(diff_content):,} chars), using chunked analysis")
+            review_result = review_large_diff_in_chunks(diff_content, commit_info)
+        else:
+            print(f"Change size: {len(diff_content):,} chars, using full analysis")
+            review_result = review_code_with_llm(diff_content, commit_info)
+
+        print("AI code review completed")
+
+    except LLMAPIError as e:
+        print(f"ERROR: {e}")
+        return False
     
     # Create review issue in the target repository
     success = create_review_issue(commit_sha, review_result, repo_name)
