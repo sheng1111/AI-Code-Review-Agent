@@ -1,5 +1,11 @@
 # 🤖 AI 程式碼審查系統
 
+[![CI](https://github.com/sheng1111/AI-Code-Review-Agent/actions/workflows/pr-review.yml/badge.svg)](https://github.com/sheng1111/AI-Code-Review-Agent/actions/workflows/pr-review.yml)
+[![GitHub stars](https://img.shields.io/github/stars/sheng1111/AI-Code-Review-Agent?style=social)](https://github.com/sheng1111/AI-Code-Review-Agent/stargazers)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Docs: DeepWiki](https://img.shields.io/badge/Docs-DeepWiki-blueviolet)](https://deepwiki.com/sheng1111/AI-Code-Review-Agent)
+[![Developed with Cursor](https://img.shields.io/badge/Developed%20with-Cursor-764ABC)](https://www.cursor.sh/)
+[![AI Tool](https://img.shields.io/badge/-AI%20Tool-brightgreen)](#)
 基於大型語言模型的自動化程式碼審查工具，提供專業、全面的程式碼品質分析。支援多倉庫監控、自動審查和智能分析。
 
 ## ✨ 核心功能
