@@ -17,9 +17,9 @@ on:
         required: false
         default: '5'
       scan_concurrency:
-        description: 'Number of repositories to scan concurrently (default: 4)'
+        description: 'Number of repositories to scan concurrently (default: 5)'
         required: false
-        default: '4'
+        default: '5'
 
 # Add necessary permission settings
 permissions:
