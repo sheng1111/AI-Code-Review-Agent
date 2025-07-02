@@ -15,7 +15,8 @@
       "sheng1111/EdgeFunASR_STT",
       "sheng1111/M4A-Transcriber-TW",
       "sheng1111/EdgeWhisperPi",
-      "sheng1111/Proxy-Hunter"
+      "sheng1111/Proxy-Hunter",
+      "sheng1111/text2srt_tts"
     ],
     "default_repo": "sheng1111/AI-Code-Review-Agent"
   },
