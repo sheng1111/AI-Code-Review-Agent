@@ -15,7 +15,7 @@ on:
       max_commits_per_repo:
         description: 'Max commits to review per repository (default: 3)'
         required: false
-        default: '3'
+        default: '5'
       scan_concurrency:
         description: 'Number of repositories to scan concurrently (default: 4)'
         required: false
