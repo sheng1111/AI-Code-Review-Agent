@@ -430,6 +430,14 @@ def has_actionable_findings(review_text):
     return bool(review_text and review_text.strip() != "未發現需要修改的問題。")
 
 
+def parse_llm_json_response(response, api_name):
+    """Parse an LLM HTTP response body as JSON."""
+    try:
+        return response.json()
+    except ValueError as e:
+        raise LLMAPIError(f"{api_name} returned invalid JSON") from e
+
+
 def call_responses_api(base_url, headers, model, prompt, max_tokens):
     """Call OpenAI Responses API."""
     data = {
@@ -454,7 +462,7 @@ def call_responses_api(base_url, headers, model, prompt, max_tokens):
     if response.status_code != 200:
         raise LLMAPIError(f"Responses API error {response.status_code}: {response.text[:500]}")
 
-    result = response.json()
+    result = parse_llm_json_response(response, "Responses API")
     output_text = extract_responses_text(result)
     if output_text:
         return output_text
@@ -487,7 +495,7 @@ def call_chat_completions_api(base_url, headers, model, prompt, max_tokens, temp
     if response.status_code != 200:
         raise LLMAPIError(f"Chat Completions API error {response.status_code}: {response.text[:500]}")
 
-    result = response.json()
+    result = parse_llm_json_response(response, "Chat Completions API")
     if 'choices' in result and result['choices']:
         return result['choices'][0]['message']['content']
 
