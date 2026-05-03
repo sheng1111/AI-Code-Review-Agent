@@ -16,6 +16,54 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 
 # ========== Load Configuration ==========
+DEFAULT_CONFIG = {
+    "model": {
+        "name": "gpt-5.4-nano",
+        "fallback_models": ["gpt-5.4-mini", "gpt-5.4"],
+        "api_mode": "responses",
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "service_tier": "flex",
+        "max_tokens": 32768,
+        "temperature": None,
+        "timeout": 900
+    },
+    "projects": {
+        "enabled_repos": ["*"]
+    },
+    "review": {
+        "max_diff_size": 150000,
+        "large_diff_threshold": 300000,
+        "chunk_max_tokens": 8192,
+        "max_files_detail": 8,
+        "overview_max_tokens": 12288,
+        "response_language": "zh-TW"
+    },
+    "filters": {
+        "ignored_extensions": [".md", ".txt", ".yml", ".yaml", ".json", ".lock", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"],
+        "ignored_paths": ["docs/", "documentation/", ".github/", "node_modules/", "dist/", "build/", ".vscode/"],
+        "code_extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".go", ".rs", ".php", ".rb", ".cs", ".swift", ".kt"]
+    },
+    "prompts": {
+        "include_line_numbers": True,
+        "detailed_analysis": True,
+        "security_focus": True,
+        "performance_analysis": True
+    }
+}
+
+
+def merge_config(defaults, overrides):
+    """Recursively merge user config over defaults."""
+    merged = defaults.copy()
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_config(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 @lru_cache(maxsize=1)
 def load_config():
     """Load configuration file with caching"""
@@ -23,14 +71,14 @@ def load_config():
     
     try:
         if not config_path.exists():
-            print(f"Config file not found: {config_path}")
-            sys.exit(1)
+            print("Config file not found, using built-in defaults")
+            return DEFAULT_CONFIG
             
         with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
+            user_config = json.load(f)
             
         print(f"Config loaded: {config_path}")
-        return config
+        return merge_config(DEFAULT_CONFIG, user_config)
             
     except json.JSONDecodeError as e:
         print(f"Invalid JSON in config file: {e}")
@@ -47,14 +95,17 @@ class ModelConfig:
     """Model configuration constants"""
     MODEL_NAME = CONFIG["model"]["name"]
     FALLBACK_MODELS = CONFIG["model"]["fallback_models"]
+    API_MODE = CONFIG["model"].get("api_mode", "responses")
+    REASONING_EFFORT = CONFIG["model"].get("reasoning_effort", "medium")
+    VERBOSITY = CONFIG["model"].get("verbosity", "low")
+    SERVICE_TIER = CONFIG["model"].get("service_tier", "flex")
     MAX_TOKENS = CONFIG["model"]["max_tokens"]
-    TEMPERATURE = CONFIG["model"]["temperature"]
+    TEMPERATURE = CONFIG["model"].get("temperature")
     TIMEOUT = CONFIG["model"]["timeout"]
 
 class ProjectConfig:
     """Project configuration constants"""
     ENABLED_REPOS = CONFIG["projects"]["enabled_repos"]
-    DEFAULT_REPO = CONFIG["projects"]["default_repo"]
 
 class ReviewConfig:
     """Review configuration constants"""
@@ -179,6 +230,43 @@ def get_recent_commits_from_repo(repo_name, hours=None):
         print(f"ERROR: Exception while getting commits from {repo_name}: {str(e)}")
         return []
 
+def get_all_accessible_repos():
+    """List repositories accessible by the GitHub token."""
+    token = os.environ['GH_TOKEN']
+    headers = {
+        'Authorization': f'token {token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+
+    repos = []
+    page = 1
+    while True:
+        params = {
+            'visibility': 'all',
+            'affiliation': 'owner,collaborator,organization_member',
+            'per_page': 100,
+            'page': page
+        }
+        try:
+            response = requests.get('https://api.github.com/user/repos', headers=headers, params=params, timeout=30)
+            if response.status_code != 200:
+                print(f"ERROR: Cannot list accessible repositories: {response.status_code}")
+                return repos
+
+            page_repos = response.json()
+            if not page_repos:
+                return repos
+
+            for repo in page_repos:
+                full_name = repo.get('full_name')
+                if full_name and not repo.get('archived', False):
+                    repos.append(full_name)
+
+            page += 1
+        except Exception as e:
+            print(f"ERROR: Exception while listing repositories: {str(e)}")
+            return repos
+
 def scan_all_enabled_repos():
     """Scan all enabled repositories for recent commits"""
     print("Starting scan of all enabled repositories...")
@@ -187,13 +275,14 @@ def scan_all_enabled_repos():
         print("ERROR: GitHub Token permission test failed, stopping execution")
         return []
     
-    repos_to_scan = []
     enabled_repos = ProjectConfig.ENABLED_REPOS
     
-    # Handle wildcard case
     if "*" in enabled_repos:
-        print("WARNING: Wildcard mode (*) not implemented yet, please specify repositories explicitly in config.json")
-        return []
+        print("Wildcard repo mode enabled, scanning all repositories accessible by GH_TOKEN")
+        enabled_repos = get_all_accessible_repos()
+        if not enabled_repos:
+            print("WARNING: No accessible repositories found")
+            return []
     
     pending_reviews = []
 
@@ -232,7 +321,11 @@ def scan_all_enabled_repos():
         future_to_repo = {executor.submit(process_repository, repo): repo for repo in enabled_repos}
 
         for future in as_completed(future_to_repo):
-            pending_reviews.extend(future.result())
+            repo_name = future_to_repo[future]
+            try:
+                pending_reviews.extend(future.result())
+            except Exception as e:
+                print(f"ERROR: Failed to scan repository {repo_name}: {str(e)}")
 
     return pending_reviews
 
@@ -303,6 +396,104 @@ class LLMAPIError(Exception):
     """Raised when the LLM API call fails"""
 
 
+def extract_responses_text(result):
+    """Extract text from a Responses API payload."""
+    if result.get('output_text'):
+        return result['output_text']
+
+    text_parts = []
+    for item in result.get('output', []):
+        for content in item.get('content', []):
+            if content.get('type') == 'output_text' and content.get('text'):
+                text_parts.append(content['text'])
+
+    return '\n'.join(text_parts).strip()
+
+
+def build_review_instructions():
+    """Build stable reviewer instructions shared by all review prompts."""
+    return """You are a strict senior code reviewer for production software.
+
+Review only defects that are directly supported by the provided diff. Do not invent issues, do not ask for speculative rewrites, and do not list generic best practices.
+
+Output contract:
+- If there is no actionable defect, output exactly one sentence: 未發現需要修改的問題。
+- Otherwise list only actionable defects that should be fixed before or soon after merge.
+- Each defect must include: severity, file/line or diff hunk, evidence, impact, exact fix, verification.
+- Add a final line "AI_AGENT_FIX_PROMPT:" with a concise instruction that an AI coding agent can execute.
+- Do not include praise, introductions, broad summaries, or unrelated recommendations.
+- Prefer fewer high-confidence findings over many weak findings."""
+
+
+def has_actionable_findings(review_text):
+    """Return True when a review contains actionable findings."""
+    return bool(review_text and review_text.strip() != "未發現需要修改的問題。")
+
+
+def call_responses_api(base_url, headers, model, prompt, max_tokens):
+    """Call OpenAI Responses API."""
+    data = {
+        'model': model,
+        'instructions': build_review_instructions(),
+        'input': prompt,
+        'max_output_tokens': max_tokens,
+        'reasoning': {'effort': ModelConfig.REASONING_EFFORT},
+        'text': {'verbosity': ModelConfig.VERBOSITY},
+        'truncation': 'auto'
+    }
+    if ModelConfig.SERVICE_TIER:
+        data['service_tier'] = ModelConfig.SERVICE_TIER
+
+    response = requests.post(
+        f"{base_url.rstrip('/')}/responses",
+        headers=headers,
+        json=data,
+        timeout=ModelConfig.TIMEOUT,
+    )
+
+    if response.status_code != 200:
+        raise LLMAPIError(f"Responses API error {response.status_code}: {response.text[:500]}")
+
+    result = response.json()
+    output_text = extract_responses_text(result)
+    if output_text:
+        return output_text
+
+    raise LLMAPIError("Responses API returned no output text")
+
+
+def call_chat_completions_api(base_url, headers, model, prompt, max_tokens, temperature):
+    """Call Chat Completions API for compatible providers."""
+    data = {
+        'model': model,
+        'messages': [
+            {'role': 'system', 'content': build_review_instructions()},
+            {'role': 'user', 'content': prompt}
+        ],
+        'max_tokens': max_tokens
+    }
+    if temperature is not None:
+        data['temperature'] = temperature
+    if ModelConfig.SERVICE_TIER:
+        data['service_tier'] = ModelConfig.SERVICE_TIER
+
+    response = requests.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        headers=headers,
+        json=data,
+        timeout=ModelConfig.TIMEOUT,
+    )
+
+    if response.status_code != 200:
+        raise LLMAPIError(f"Chat Completions API error {response.status_code}: {response.text[:500]}")
+
+    result = response.json()
+    if 'choices' in result and result['choices']:
+        return result['choices'][0]['message']['content']
+
+    raise LLMAPIError("Chat Completions API returned no message content")
+
+
 def call_llm_api(prompt, max_tokens=None, temperature=None):
     """Unified interface for calling the LLM API
 
@@ -312,40 +503,38 @@ def call_llm_api(prompt, max_tokens=None, temperature=None):
         If the API returns a non-200 status code or the request fails.
     """
     api_key = os.environ['OPENAI_KEY']
-    base_url = os.environ['OPENAI_BASE_URL']
+    base_url = os.environ.get('OPENAI_BASE_URL') or 'https://api.openai.com/v1'
 
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json'
     }
 
-    data = {
-        'model': ModelConfig.MODEL_NAME,
-        'messages': [{'role': 'user', 'content': prompt}],
-        'max_tokens': max_tokens or ModelConfig.MAX_TOKENS,
-        'temperature': temperature or ModelConfig.TEMPERATURE
-    }
+    models = [ModelConfig.MODEL_NAME] + list(ModelConfig.FALLBACK_MODELS)
+    errors = []
 
-    try:
-        completion_url = f"{base_url.rstrip('/')}/chat/completions"
-        response = requests.post(
-            completion_url,
-            headers=headers,
-            json=data,
-            timeout=ModelConfig.TIMEOUT,
-        )
+    for model in models:
+        try:
+            if ModelConfig.API_MODE == "responses":
+                return call_responses_api(base_url, headers, model, prompt, max_tokens or ModelConfig.MAX_TOKENS)
 
-        if response.status_code == 200:
-            result = response.json()
-            if 'choices' in result and result['choices']:
-                return result['choices'][0]['message']['content']
-            raise LLMAPIError("LLM response format error")
+            return call_chat_completions_api(
+                base_url,
+                headers,
+                model,
+                prompt,
+                max_tokens or ModelConfig.MAX_TOKENS,
+                temperature if temperature is not None else ModelConfig.TEMPERATURE,
+            )
 
-        # Avoid leaking potential API keys in error responses
-        raise LLMAPIError(f"LLM service error {response.status_code}")
+        except LLMAPIError as e:
+            errors.append(f"{model}: {e}")
+            print(f"WARNING: LLM model failed, trying fallback if available: {model}")
+        except requests.RequestException as e:
+            errors.append(f"{model}: request failed: {str(e)}")
+            print(f"WARNING: LLM request failed, trying fallback if available: {model}")
 
-    except Exception as e:
-        raise LLMAPIError(f"LLM API call failed: {str(e)}") from e
+    raise LLMAPIError("All LLM models failed: " + " | ".join(errors))
 
 def generate_review_prompt(diff_content, commit_info):
     """Generate code review prompt"""
@@ -367,7 +556,7 @@ def generate_review_prompt(diff_content, commit_info):
     
     language_instruction = language_map.get(ReviewConfig.RESPONSE_LANGUAGE, language_map["en"])
     
-    return f"""You are a senior code reviewer. Please conduct a comprehensive code review of the following Git commit following industry standards.
+    return f"""Review this Git commit for actionable bugs and logic problems.
 
 ## Commit Information
 - Author: {commit_info.get('commit', {}).get('author', {}).get('name', 'Unknown')}
@@ -380,57 +569,21 @@ def generate_review_prompt(diff_content, commit_info):
 ```
 {f"Note: Due to large changes, only showing first {max_diff_size} characters" if len(diff_content) > max_diff_size else ""}
 
-Please provide a detailed review covering the following aspects:
+Focus areas, in order: security defects, correctness bugs, data loss risks, broken error handling, concurrency issues, API incompatibilities, performance regressions with concrete impact, and missing tests only when they protect a specific changed behavior.
 
-## Security Analysis
-- SQL injection, XSS, CSRF vulnerabilities
-- Hardcoded sensitive information (API keys, passwords, secrets)
-- Input validation and data sanitization
-- Authentication and authorization mechanisms
-- Dependency vulnerabilities
+Severity:
+- CRITICAL: exploitable security issue, data loss, production outage, or irreversible corruption
+- MAJOR: likely user-visible bug, broken workflow, compatibility break, or serious performance regression
+- MINOR: localized bug, test gap for changed behavior, or maintainability issue with clear future failure mode
 
-## Performance Review
-- Algorithm complexity analysis
-- Database query optimization
-- Memory usage patterns
-- Concurrency and thread safety
-- Caching strategies
-- Resource management
-
-## Code Quality
-- Code readability and maintainability
-- Function and class design
-- Error handling and exception management
-- Code duplication and refactoring opportunities
-- Naming conventions and documentation quality
-- SOLID principles adherence
-
-## Testing Coverage
-- Unit test requirements
-- Edge case testing
-- Error condition testing
-- Integration test needs
-- Test quality and maintainability
-
-## Best Practices
-- Language-specific best practices
-- Design pattern usage
-- Dependency management
-- Documentation completeness
-- Configuration management
-
-## Recommendations
-- Specific code improvement suggestions
-- Refactoring recommendations with rationale
-- Technical debt identification
-- Long-term maintenance considerations
-
-Please categorize each finding by severity:
-- CRITICAL: Security vulnerabilities, data loss risks, system failures
-- MAJOR: Performance issues, design flaws, breaking changes
-- MINOR: Code style, optimization opportunities, suggestions
-
-Provide specific line numbers where applicable. If code quality is good, please acknowledge positive aspects as well.
+Required format for each finding:
+### [SEVERITY] Short actionable title
+- 位置: file path and changed line/hunk
+- 證據: quote or summarize the exact diff evidence
+- 影響: concrete failure mode
+- 修法: exact implementation direction
+- 驗證: command or test case to prove the fix
+- AI_AGENT_FIX_PROMPT: one direct repair instruction
 
 {language_instruction}"""
 
@@ -479,7 +632,7 @@ def review_large_diff_in_chunks(diff_content, commit_info):
     language_instruction = language_map.get(ReviewConfig.RESPONSE_LANGUAGE, language_map["en"])
     
     # Generate overview analysis
-    overview_prompt = f"""As a senior code reviewer, please analyze the overall impact of this large commit:
+    overview_prompt = f"""Review the overall risk of this large commit. Only report actionable risks supported by the changed file list and statistics.
 
 ## Commit Information
 - Author: {commit_info.get('commit', {}).get('author', {}).get('name', 'Unknown')}
@@ -490,13 +643,15 @@ def review_large_diff_in_chunks(diff_content, commit_info):
 {chr(10).join([f"- {f.get('filename', 'unknown')}: +{f.get('additions', 0)}/-{f.get('deletions', 0)}" for f in files_changed[:20]])}
 {"..." if len(files_changed) > 20 else ""}
 
-Please provide:
-1. **Overall Assessment**: Change type, scope and complexity
-2. **Focus Areas**: Files/changes requiring special attention
-3. **Risk Analysis**: Potential risks from large-scale changes
-4. **Recommendations**: Deployment and testing strategies
-
-Use professional code review terminology and industry standards.
+If there is no actionable defect, output exactly: 未發現需要修改的問題。
+Otherwise use this format:
+### [SEVERITY] Short actionable title
+- 位置: affected file or change group
+- 證據: exact changed-file/stat evidence
+- 影響: concrete failure mode
+- 修法: exact implementation direction
+- 驗證: command or test case to prove the fix
+- AI_AGENT_FIX_PROMPT: one direct repair instruction
 
 {language_instruction}"""
     
@@ -519,7 +674,7 @@ Use professional code review terminology and industry standards.
                 break
         
         if file_diff:
-            file_prompt = f"""Please review the changes in this file:
+            file_prompt = f"""Review this file diff for actionable bugs and logic problems only:
 
 ## File: {filename}
 ## Change Statistics: +{file_info.get('additions', 0)}/-{file_info.get('deletions', 0)}
@@ -528,17 +683,27 @@ Use professional code review terminology and industry standards.
 {file_diff}
 ```
 
-Focus on:
-- Security vulnerabilities and risks
-- Performance implications
-- Potential bugs and issues
-- Code quality and maintainability
-
-Provide concise, professional analysis following industry standards.
+If there is no actionable defect, output exactly: 未發現需要修改的問題。
+Otherwise use this format:
+### [SEVERITY] Short actionable title
+- 位置: file path and changed line/hunk
+- 證據: exact diff evidence
+- 影響: concrete failure mode
+- 修法: exact implementation direction
+- 驗證: command or test case to prove the fix
+- AI_AGENT_FIX_PROMPT: one direct repair instruction
 
 {language_instruction}"""
             
-            file_review = call_llm_api(file_prompt, ReviewConfig.CHUNK_MAX_TOKENS)
+            try:
+                file_review = call_llm_api(file_prompt, ReviewConfig.CHUNK_MAX_TOKENS)
+            except LLMAPIError as e:
+                print(f"WARNING: Failed to review file {filename}: {e}")
+                return None
+
+            if not has_actionable_findings(file_review):
+                return None
+
             return f"### {filename}\n{file_review}"
         return None
 
@@ -549,28 +714,26 @@ Provide concise, professional analysis following industry standards.
                          for file_info in important_files}
         
         for future in as_completed(future_to_file):
-            result = future.result()
-            if result:
-                detailed_reviews.append(result)
+            filename = future_to_file[future].get('filename', 'unknown')
+            try:
+                result = future.result()
+                if result:
+                    detailed_reviews.append(result)
+            except Exception as e:
+                print(f"WARNING: Failed to collect review for file {filename}: {str(e)}")
             time.sleep(0.5)  # Rate limiting
     
-    # Combine results
-    final_review = f"""## Large-Scale Change Analysis
+    # Combine only actionable findings.
+    review_sections = []
+    if has_actionable_findings(overview_analysis):
+        review_sections.append(f"## Large-Scale Change Findings\n\n{overview_analysis}")
+    if detailed_reviews:
+        review_sections.append(f"## Detailed File Findings\n\n{chr(10).join(detailed_reviews)}")
 
-{overview_analysis}
+    if not review_sections:
+        return "未發現需要修改的問題。"
 
-## Detailed File Reviews
-
-{chr(10).join(detailed_reviews)}
-
-## Summary and Recommendations
-
-**Testing Focus**: Priority testing required for {len(important_files)} high-impact files
-**Deployment Strategy**: Recommend phased deployment with system monitoring
-**Risk Assessment**: {len(files_changed)} files affected, comprehensive regression testing advised
-
----
-*Automated large-scale change analysis - combine with human review*"""
+    final_review = "\n\n".join(review_sections)
     
     return final_review
 
@@ -618,7 +781,7 @@ def create_review_issue(commit_sha, review_content, repo=None):
     commit_author = commit_info.get('commit', {}).get('author', {}).get('name', 'Unknown') if commit_info else 'Unknown'
     
     # Generate issue title
-    issue_title = f"🤖 AI Code Review - Commit {commit_sha[:8]}"
+    issue_title = f"AI Code Review - Commit {commit_sha[:8]}"
     
     # Format issue content
     issue_body = f"""## AI Code Review Report
@@ -634,18 +797,7 @@ def create_review_issue(commit_sha, review_content, repo=None):
 {review_content}
 
 ---
-
-### 📋 Review Notes
-- This review is automatically generated by AI, please combine with human judgment
-- Recommend prioritizing CRITICAL and MAJOR issues by severity
-- If you have questions or need further discussion, please comment below this issue
-
-### 🔗 Related Links
-- [View Commit Changes](https://github.com/{repo}/commit/{commit_sha})
-- [View File Diff](https://github.com/{repo}/commit/{commit_sha}.diff)
-
----
-*This review is automatically generated by [AI Code Review Agent](https://github.com/sheng1111/AI-Code-Review-Agent)*
+Generated by [AI Code Review Agent](https://github.com/sheng1111/AI-Code-Review-Agent). Diff: https://github.com/{repo}/commit/{commit_sha}.diff
 """
     
     # Create issue with retry mechanism
@@ -714,8 +866,14 @@ def print_config_summary():
     """Display configuration summary"""
     print("Configuration Summary:")
     print(f"  Model: {ModelConfig.MODEL_NAME}")
+    print(f"  Fallback Models: {ModelConfig.FALLBACK_MODELS}")
+    print(f"  API Mode: {ModelConfig.API_MODE}")
+    print(f"  Reasoning Effort: {ModelConfig.REASONING_EFFORT}")
+    print(f"  Verbosity: {ModelConfig.VERBOSITY}")
+    print(f"  Service Tier: {ModelConfig.SERVICE_TIER}")
     print(f"  Max Tokens: {ModelConfig.MAX_TOKENS:,}")
-    print(f"  Temperature: {ModelConfig.TEMPERATURE}")
+    if ModelConfig.TEMPERATURE is not None:
+        print(f"  Temperature: {ModelConfig.TEMPERATURE}")
     print(f"  Large Diff Threshold: {ReviewConfig.LARGE_DIFF_THRESHOLD:,} chars")
     print(f"  Max Detailed Files: {ReviewConfig.MAX_FILES_DETAIL}")
     print(f"  Response Language: {ReviewConfig.RESPONSE_LANGUAGE}")
@@ -778,7 +936,7 @@ def main():
     print("AI Code Review System Starting")
     
     # Check required environment variables
-    required_env_vars = ['GH_TOKEN', 'OPENAI_KEY', 'OPENAI_BASE_URL']
+    required_env_vars = ['GH_TOKEN', 'OPENAI_KEY']
     missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
     
     if missing_vars:
@@ -814,18 +972,12 @@ def main():
         review_single_commit(commit_data)
         
     else:
-        # Scheduled scan mode (for other repositories)
+        # Scheduled scan mode
         print("Scheduled Scan Mode")
-        current_repo = os.environ.get('GITHUB_REPOSITORY')
-        
-        # Get all enabled repos and exclude current repo if it exists
         enabled_repos = ProjectConfig.ENABLED_REPOS.copy()
-        if current_repo and current_repo in enabled_repos:
-            enabled_repos.remove(current_repo)
-            print(f"Excluded current repository from scheduled scan: {current_repo}")
         
         if not enabled_repos:
-            print("No repositories to scan (current repository excluded from scheduled scan)")
+            print("No repositories to scan")
             return
         
         # Temporarily override enabled repos for this scan

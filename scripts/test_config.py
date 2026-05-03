@@ -9,19 +9,70 @@ import sys
 import json
 from pathlib import Path
 
+DEFAULT_CONFIG = {
+    "model": {
+        "name": "gpt-5.4-nano",
+        "fallback_models": ["gpt-5.4-mini", "gpt-5.4"],
+        "api_mode": "responses",
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "service_tier": "flex",
+        "max_tokens": 32768,
+        "temperature": None,
+        "timeout": 900
+    },
+    "projects": {
+        "enabled_repos": ["*"]
+    },
+    "review": {
+        "max_diff_size": 150000,
+        "large_diff_threshold": 300000,
+        "chunk_max_tokens": 8192,
+        "max_files_detail": 8,
+        "overview_max_tokens": 12288,
+        "response_language": "zh-TW"
+    },
+    "filters": {
+        "ignored_extensions": [".md", ".txt", ".yml", ".yaml", ".json", ".lock", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"],
+        "ignored_paths": ["docs/", "documentation/", ".github/", "node_modules/", "dist/", "build/", ".vscode/"],
+        "code_extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".go", ".rs", ".php", ".rb", ".cs", ".swift", ".kt"]
+    },
+    "prompts": {
+        "include_line_numbers": True,
+        "detailed_analysis": True,
+        "security_focus": True,
+        "performance_analysis": True
+    }
+}
+
+
+def merge_config(defaults, overrides):
+    """Recursively merge user config over defaults."""
+    merged = defaults.copy()
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_config(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def validate_config_structure(config):
     """Validate configuration structure and required fields"""
     required_structure = {
         "model": {
             "name": str,
             "fallback_models": list,
+            "api_mode": str,
+            "reasoning_effort": str,
+            "verbosity": str,
+            "service_tier": (str, type(None)),
             "max_tokens": int,
-            "temperature": (int, float),
+            "temperature": (int, float, type(None)),
             "timeout": int
         },
         "projects": {
-            "enabled_repos": list,
-            "default_repo": str
+            "enabled_repos": list
         },
         "review": {
             "max_diff_size": int,
@@ -74,9 +125,23 @@ def validate_config_structure(config):
     
     # Additional value validations
     model_config = config["model"]
+    if not model_config["name"].strip():
+        raise ValueError("model.name cannot be empty")
+    if model_config["name"] in model_config["fallback_models"]:
+        raise ValueError("model.fallback_models cannot contain model.name")
+    if not all(isinstance(model, str) and model.strip() for model in model_config["fallback_models"]):
+        raise ValueError("All items in model.fallback_models must be non-empty strings")
+    if model_config["api_mode"] not in ["responses", "chat_completions"]:
+        raise ValueError("model.api_mode must be 'responses' or 'chat_completions'")
+    if model_config["reasoning_effort"] not in ["none", "minimal", "low", "medium", "high", "xhigh"]:
+        raise ValueError("model.reasoning_effort must be one of: none, minimal, low, medium, high, xhigh")
+    if model_config["verbosity"] not in ["low", "medium", "high"]:
+        raise ValueError("model.verbosity must be one of: low, medium, high")
+    if model_config["service_tier"] not in [None, "auto", "default", "flex"]:
+        raise ValueError("model.service_tier must be one of: auto, default, flex")
     if model_config["max_tokens"] <= 0:
         raise ValueError("model.max_tokens must be positive")
-    if not (0.0 <= model_config["temperature"] <= 2.0):
+    if model_config["temperature"] is not None and not (0.0 <= model_config["temperature"] <= 2.0):
         raise ValueError("model.temperature must be between 0.0 and 2.0")
     if model_config["timeout"] <= 0:
         raise ValueError("model.timeout must be positive")
@@ -126,22 +191,27 @@ def test_config():
     config_path = Path(__file__).parent.parent / "config.json"
     
     try:
-        if not config_path.exists():
-            print(f"❌ Config file not found: {config_path}")
-            return False
-            
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as f:
+                user_config = json.load(f)
+            config = merge_config(DEFAULT_CONFIG, user_config)
+        else:
+            config = DEFAULT_CONFIG
+            print("ℹ️  config.json not found; built-in defaults will be used")
             
         # Validate configuration structure
         validate_config_structure(config)
         
         print("✅ Configuration validation passed")
         print(f"   Model: {config['model']['name']}")
+        print(f"   Service tier: {config['model']['service_tier']}")
         print(f"   Language: {config['review']['response_language']}")
-        print(f"   Enabled repos: {len(config['projects']['enabled_repos'])} repositories")
+        repos = config['projects']['enabled_repos']
+        repo_summary = "all accessible repositories" if "*" in repos else f"{len(repos)} repositories"
+        print(f"   Enabled repos: {repo_summary}")
         print(f"   Max tokens: {config['model']['max_tokens']:,}")
-        print(f"   Temperature: {config['model']['temperature']}")
+        if config['model']['temperature'] is not None:
+            print(f"   Temperature: {config['model']['temperature']}")
         return True
             
     except json.JSONDecodeError as e:

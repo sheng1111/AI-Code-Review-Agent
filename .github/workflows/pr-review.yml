@@ -63,11 +63,10 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "## 🤖 AI Code Review Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## AI Code Review Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Execution Time**: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${GITHUB_REF#refs/heads/}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${GITHUB_SHA:0:8}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Completed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "💡 **Tip**: The review results have been published in the commit comments" >> $GITHUB_STEP_SUMMARY
-          echo "📋 **View**: Go to the Issues page to view the complete code review report" >> $GITHUB_STEP_SUMMARY 
+          echo "Review results are published as Issues with the ai-code-review label." >> $GITHUB_STEP_SUMMARY
