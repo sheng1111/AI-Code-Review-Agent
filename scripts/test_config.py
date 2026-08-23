@@ -4,20 +4,23 @@ Configuration Validation Test Script
 Validates config.json structure and values before running the main AI code review script.
 """
 
-import os
-import sys
 import json
+import re
+import sys
 from pathlib import Path
 
 DEFAULT_CONFIG = {
     "model": {
-        "name": "gpt-5.4-nano",
-        "fallback_models": ["gpt-5.4-mini", "gpt-5.4"],
+        "name": "gpt-5.6-luna",
+        "fallback_models": [],
         "api_mode": "responses",
-        "reasoning_effort": "medium",
+        "reasoning_effort": "low",
         "verbosity": "low",
         "service_tier": "flex",
-        "max_tokens": 32768,
+        "flex_fallback_to_auto": True,
+        "max_retries": 3,
+        "retry_backoff_seconds": 1.0,
+        "max_tokens": 16384,
         "temperature": None,
         "timeout": 900
     },
@@ -26,15 +29,14 @@ DEFAULT_CONFIG = {
     },
     "review": {
         "max_diff_size": 150000,
-        "large_diff_threshold": 300000,
+        "large_diff_threshold": 150000,
         "chunk_max_tokens": 8192,
-        "max_files_detail": 8,
-        "overview_max_tokens": 12288,
+        "chunk_concurrency": 2,
         "response_language": "zh-TW"
     },
     "filters": {
-        "ignored_extensions": [".md", ".txt", ".yml", ".yaml", ".json", ".lock", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"],
-        "ignored_paths": ["docs/", "documentation/", ".github/", "node_modules/", "dist/", "build/", ".vscode/"],
+        "ignored_extensions": [".md", ".txt", ".lock", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"],
+        "ignored_paths": ["docs/", "documentation/", "node_modules/", "dist/", "build/", ".vscode/"],
         "code_extensions": [".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".go", ".rs", ".php", ".rb", ".cs", ".swift", ".kt"]
     },
     "prompts": {
@@ -44,6 +46,33 @@ DEFAULT_CONFIG = {
         "performance_analysis": True
     }
 }
+
+_BCP47_RE = re.compile(
+    r"^(?:"
+    r"(?:[A-Za-z]{2,3}(?:-[A-Za-z]{3}){0,3}|[A-Za-z]{4}|[A-Za-z]{5,8})"
+    r"(?:-[A-Za-z]{4})?"
+    r"(?:-(?:[A-Za-z]{2}|[0-9]{3}))?"
+    r"(?:-(?:[A-Za-z0-9]{5,8}|[0-9][A-Za-z0-9]{3}))*"
+    r"(?:-[0-9A-WY-Za-wy-z](?:-[A-Za-z0-9]{2,8})+)*"
+    r"(?:-x(?:-[A-Za-z0-9]{1,8})+)?"
+    r"|x(?:-[A-Za-z0-9]{1,8})+"
+    r")$"
+)
+_BCP47_GRANDFATHERED = {
+    "art-lojban", "cel-gaulish", "en-gb-oed", "i-ami", "i-bnn", "i-default",
+    "i-enochian", "i-hak", "i-klingon", "i-lux", "i-mingo", "i-navajo",
+    "i-pwn", "i-tao", "i-tay", "i-tsu", "no-bok", "no-nyn", "sgn-be-fr",
+    "sgn-be-nl", "sgn-ch-de", "zh-guoyu", "zh-hakka", "zh-min", "zh-min-nan",
+    "zh-xiang",
+}
+
+
+def is_valid_bcp47(language_tag):
+    """Return whether a value is a safe, structurally valid BCP 47 language tag."""
+    if not isinstance(language_tag, str):
+        return False
+    normalized = language_tag.strip()
+    return normalized.lower() in _BCP47_GRANDFATHERED or bool(_BCP47_RE.fullmatch(normalized))
 
 
 def merge_config(defaults, overrides):
@@ -67,6 +96,9 @@ def validate_config_structure(config):
             "reasoning_effort": str,
             "verbosity": str,
             "service_tier": (str, type(None)),
+            "flex_fallback_to_auto": bool,
+            "max_retries": int,
+            "retry_backoff_seconds": (int, float),
             "max_tokens": int,
             "temperature": (int, float, type(None)),
             "timeout": int
@@ -78,8 +110,7 @@ def validate_config_structure(config):
             "max_diff_size": int,
             "large_diff_threshold": int,
             "chunk_max_tokens": int,
-            "max_files_detail": int,
-            "overview_max_tokens": int,
+            "chunk_concurrency": int,
             "response_language": str
         },
         "filters": {
@@ -133,12 +164,16 @@ def validate_config_structure(config):
         raise ValueError("All items in model.fallback_models must be non-empty strings")
     if model_config["api_mode"] not in ["responses", "chat_completions"]:
         raise ValueError("model.api_mode must be 'responses' or 'chat_completions'")
-    if model_config["reasoning_effort"] not in ["none", "minimal", "low", "medium", "high", "xhigh"]:
-        raise ValueError("model.reasoning_effort must be one of: none, minimal, low, medium, high, xhigh")
+    if model_config["reasoning_effort"] not in ["none", "minimal", "low", "medium", "high", "xhigh", "max"]:
+        raise ValueError("model.reasoning_effort must be one of: none, minimal, low, medium, high, xhigh, max")
     if model_config["verbosity"] not in ["low", "medium", "high"]:
         raise ValueError("model.verbosity must be one of: low, medium, high")
     if model_config["service_tier"] not in [None, "auto", "default", "flex"]:
         raise ValueError("model.service_tier must be one of: auto, default, flex")
+    if model_config["max_retries"] <= 0 or model_config["max_retries"] > 10:
+        raise ValueError("model.max_retries must be between 1 and 10")
+    if model_config["retry_backoff_seconds"] < 0 or model_config["retry_backoff_seconds"] > 60:
+        raise ValueError("model.retry_backoff_seconds must be between 0 and 60")
     if model_config["max_tokens"] <= 0:
         raise ValueError("model.max_tokens must be positive")
     if model_config["temperature"] is not None and not (0.0 <= model_config["temperature"] <= 2.0):
@@ -153,15 +188,10 @@ def validate_config_structure(config):
         raise ValueError("review.large_diff_threshold must be positive")
     if review_config["chunk_max_tokens"] <= 0:
         raise ValueError("review.chunk_max_tokens must be positive")
-    if review_config["max_files_detail"] <= 0:
-        raise ValueError("review.max_files_detail must be positive")
-    if review_config["overview_max_tokens"] <= 0:
-        raise ValueError("review.overview_max_tokens must be positive")
-    
-    # Validate language code
-    supported_languages = ["zh-TW", "zh-CN", "en", "ja", "ko", "fr", "de", "es", "pt", "ru"]
-    if review_config["response_language"] not in supported_languages:
-        raise ValueError(f"review.response_language must be one of: {', '.join(supported_languages)}")
+    if review_config["chunk_concurrency"] <= 0 or review_config["chunk_concurrency"] > 16:
+        raise ValueError("review.chunk_concurrency must be between 1 and 16")
+    if not is_valid_bcp47(review_config["response_language"]):
+        raise ValueError("review.response_language must be a valid BCP 47 language tag")
     
     # Validate enabled_repos format
     projects_config = config["projects"]

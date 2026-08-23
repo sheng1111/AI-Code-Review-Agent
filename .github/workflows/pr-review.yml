@@ -32,22 +32,27 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 5  # Get the last 5 commits for comparison
           
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           
       - name: Install dependencies
         run: |
-          pip install --no-cache-dir requests
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade --no-cache-dir "requests>=2.32,<3"
           
       - name: Validate Configuration
         run: |
           python scripts/test_config.py
+
+      - name: Run Unit Tests
+        run: |
+          python -m unittest discover -s tests -v
           
       - name: AI Code Review
         env:
@@ -67,6 +72,6 @@ jobs:
           echo "- **Execution Time**: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${GITHUB_REF#refs/heads/}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: ${GITHUB_SHA:0:8}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Review results are published as Issues with the ai-code-review label." >> $GITHUB_STEP_SUMMARY

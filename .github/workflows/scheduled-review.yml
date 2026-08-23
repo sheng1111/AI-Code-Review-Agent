@@ -32,20 +32,25 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
           
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           
       - name: Install dependencies
         run: |
-          pip install --no-cache-dir requests
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade --no-cache-dir "requests>=2.32,<3"
           
       - name: Validate Configuration
         run: |
           python scripts/test_config.py
+
+      - name: Run Unit Tests
+        run: |
+          python -m unittest discover -s tests -v
           
       - name: Scheduled Code Review Scan
         env:
@@ -66,6 +71,6 @@ jobs:
           echo "- **Execution Time**: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "- **Scan Range**: Last ${{ github.event.inputs.scan_hours || '24' }} hours" >> $GITHUB_STEP_SUMMARY
           echo "- **Max Reviews per Repo**: ${{ github.event.inputs.max_commits_per_repo || '3' }} commits" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "By default this scans all repositories accessible by GH_TOKEN. Set projects.enabled_repos only when you want an allowlist." >> $GITHUB_STEP_SUMMARY

@@ -1,6 +1,6 @@
 # 🤖 AI Code Review System
 
-GitHub Actions based AI code review. The default setup uses OpenAI `gpt-5.4-nano`, Flex Processing, and a concise output contract that only reports actionable issues backed by diff evidence.
+GitHub Actions based AI code review, version 1.0.0. The default setup uses OpenAI `gpt-5.6-luna`, low reasoning effort, Flex Processing, and a concise output contract that only reports actionable issues backed by diff evidence.
 
 ## Quick Start
 
@@ -41,13 +41,16 @@ You can also remove `config.json`; built-in defaults will be used.
 ```json
 {
   "model": {
-    "name": "gpt-5.4-nano",
-    "fallback_models": ["gpt-5.4-mini", "gpt-5.4"],
+    "name": "gpt-5.6-luna",
+    "fallback_models": [],
     "api_mode": "responses",
-    "reasoning_effort": "medium",
+    "reasoning_effort": "low",
     "verbosity": "low",
     "service_tier": "flex",
-    "max_tokens": 32768,
+    "flex_fallback_to_auto": true,
+    "max_retries": 3,
+    "retry_backoff_seconds": 1.0,
+    "max_tokens": 16384,
     "timeout": 900
   },
   "projects": {
@@ -56,11 +59,11 @@ You can also remove `config.json`; built-in defaults will be used.
 }
 ```
 
-`temperature` is intentionally not part of the default config. The OpenAI Responses API still documents sampling parameters, but GPT-5.4 review behavior is better controlled with `reasoning_effort`, `verbosity`, and a strict output contract.
+`temperature` is intentionally not part of the default config. GPT-5.6 review behavior is controlled with `reasoning_effort`, `verbosity`, and a strict output contract.
 
 ## Flex Processing
 
-`service_tier` defaults to `flex`, which is a good fit for asynchronous GitHub Actions review: lower cost, slower responses, and occasional resource unavailability. For higher reliability, use:
+`service_tier` defaults to `flex`, which is a good fit for asynchronous GitHub Actions review: lower cost, slower responses, and occasional resource unavailability. By default a Flex resource-unavailable response is retried with `service_tier: "auto"`; disable this with `flex_fallback_to_auto: false` when cost is more important than completion. To always use standard project routing, use:
 
 ```json
 {
@@ -69,6 +72,10 @@ You can also remove `config.json`; built-in defaults will be used.
   }
 }
 ```
+
+## Output Language
+
+`review.response_language` defaults to `zh-TW`. Any structurally valid BCP 47 language tag is accepted, including `en-US`, `zh-Hant-TW`, `sr-Latn-RS`, and `es-419`. Code, identifiers, paths, and severity labels remain unchanged.
 
 ## Repository Allowlist
 
@@ -102,7 +109,11 @@ If there is no issue, the review does not invent one.
 
 ```bash
 python3 scripts/test_config.py
+python3 -m unittest discover -s tests -v
+python3 scripts/benchmark_review.py
 ```
+
+The workflows use current `actions/checkout@v7` and `actions/setup-python@v7`, upgrade pip, and install the latest compatible Requests 2.x release. See [PERFORMANCE.md](PERFORMANCE.md) for the reproducible before/after benchmark and bottleneck analysis.
 
 ## Advanced Config
 

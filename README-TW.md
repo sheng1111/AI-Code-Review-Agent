@@ -1,6 +1,6 @@
 # 🤖 AI 程式碼審查系統
 
-GitHub Actions 自動 Code Review 工具。預設使用 OpenAI `gpt-5.4-nano`、Flex Processing、精簡輸出格式，只回報有 diff 證據、可直接交給 AI coding agent 修的問題。
+GitHub Actions 自動 Code Review 工具，版本 1.0.0。預設使用 OpenAI `gpt-5.6-luna`、low reasoning effort、Flex Processing 與精簡輸出格式，只回報有 diff 證據、可直接交給 AI coding agent 修的問題。
 
 ## 快速開始
 
@@ -41,13 +41,16 @@ GitHub Actions 自動 Code Review 工具。預設使用 OpenAI `gpt-5.4-nano`、
 ```json
 {
   "model": {
-    "name": "gpt-5.4-nano",
-    "fallback_models": ["gpt-5.4-mini", "gpt-5.4"],
+    "name": "gpt-5.6-luna",
+    "fallback_models": [],
     "api_mode": "responses",
-    "reasoning_effort": "medium",
+    "reasoning_effort": "low",
     "verbosity": "low",
     "service_tier": "flex",
-    "max_tokens": 32768,
+    "flex_fallback_to_auto": true,
+    "max_retries": 3,
+    "retry_backoff_seconds": 1.0,
+    "max_tokens": 16384,
     "timeout": 900
   },
   "projects": {
@@ -56,11 +59,11 @@ GitHub Actions 自動 Code Review 工具。預設使用 OpenAI `gpt-5.4-nano`、
 }
 ```
 
-`temperature` 不放在預設 config。OpenAI Responses API 仍有 sampling 參數，但 GPT-5.4 code review 主要用 `reasoning_effort`、`verbosity` 和嚴格 prompt contract 控制輸出。
+`temperature` 不放在預設 config。GPT-5.6 code review 主要用 `reasoning_effort`、`verbosity` 和嚴格 prompt contract 控制輸出。
 
 ## Flex Processing
 
-預設 `service_tier` 是 `flex`，適合 GitHub Actions 這種非同步 review：成本較低，但可能較慢或偶爾資源不足。若你要更穩定，可以改成：
+預設 `service_tier` 是 `flex`，適合 GitHub Actions 這種非同步 review：成本較低，但可能較慢或偶爾資源不足。若 Flex 回傳資源不足，預設會改用 `service_tier: "auto"` 重試；若成本優先，可設 `flex_fallback_to_auto: false`。若要固定使用專案標準路由，可改成：
 
 ```json
 {
@@ -69,6 +72,10 @@ GitHub Actions 自動 Code Review 工具。預設使用 OpenAI `gpt-5.4-nano`、
   }
 }
 ```
+
+## 輸出語言
+
+`review.response_language` 預設為 `zh-TW`。支援任何結構有效的 BCP 47 語言標籤，例如 `en-US`、`zh-Hant-TW`、`sr-Latn-RS`、`es-419`；程式碼、識別字、路徑與 severity label 會維持原文。
 
 ## 指定 Repo 白名單
 
@@ -102,7 +109,11 @@ GitHub Actions 自動 Code Review 工具。預設使用 OpenAI `gpt-5.4-nano`、
 
 ```bash
 python3 scripts/test_config.py
+python3 -m unittest discover -s tests -v
+python3 scripts/benchmark_review.py
 ```
+
+GitHub Actions 已更新為目前的 `actions/checkout@v7` 與 `actions/setup-python@v7`，會升級 pip 並安裝最新相容的 Requests 2.x。可重現的改善前後基準與瓶頸分析請見 [PERFORMANCE.md](PERFORMANCE.md)。
 
 ## 進階文件
 
